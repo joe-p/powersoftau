@@ -110,8 +110,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     stream_copy_points::<G1Affine, _>(&mut input, &mut output, target_tau_powers_length, Bls12CeremonyParameters::G1_UNCOMPRESSED_BYTE_SIZE)?;
     
     // Skip remaining alpha_tau_powers_g1 points
-    if skip_g2_points > 0 {
-        skip_points(&mut input, skip_g2_points, Bls12CeremonyParameters::G1_UNCOMPRESSED_BYTE_SIZE)?;
+    let skip_g1_points = current_tau_powers_length - target_tau_powers_length;
+    if skip_g1_points > 0 {
+        skip_points(&mut input, skip_g1_points, Bls12CeremonyParameters::G1_UNCOMPRESSED_BYTE_SIZE)?;
     }
 
     // Stream copy beta_tau_powers_g1 (first target_tau_powers_length points)
@@ -119,8 +120,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     stream_copy_points::<G1Affine, _>(&mut input, &mut output, target_tau_powers_length, Bls12CeremonyParameters::G1_UNCOMPRESSED_BYTE_SIZE)?;
     
     // Skip remaining beta_tau_powers_g1 points
-    if skip_g2_points > 0 {
-        skip_points(&mut input, skip_g2_points, Bls12CeremonyParameters::G1_UNCOMPRESSED_BYTE_SIZE)?;
+    if skip_g1_points > 0 {
+        skip_points(&mut input, skip_g1_points, Bls12CeremonyParameters::G1_UNCOMPRESSED_BYTE_SIZE)?;
     }
 
     // Copy beta_g2 (always just 1 point)
@@ -130,6 +131,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     output.flush().expect("unable to flush output file");
 
     println!("Successfully wrote reduced challenge to '{}'", output_file);
+
+    verify_reduced_challenge(output_file, target_power)?;
+
     Ok(())
 }
 
@@ -174,6 +178,95 @@ fn skip_points(input: &mut dyn Read, count: usize, point_size: usize) -> std::io
     
     for _ in 0..count {
         input.read_exact(&mut buffer)?;
+    }
+    
+    Ok(())
+}
+
+fn verify_reduced_challenge(output_file: &str, target_power: usize) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Verifying reduced challenge file...");
+    
+    // Open the output file
+    let file = OpenOptions::new()
+        .read(true)
+        .open(output_file)
+        .expect(&format!("unable to open output file '{}'", output_file));
+    
+    let mut reader = BufReader::new(file);
+    
+    // Skip the 64-byte hash
+    let mut hash = [0u8; 64];
+    reader.read_exact(&mut hash)?;
+    
+    // Calculate expected sizes
+    let expected_tau_powers_length = 1 << target_power;
+    let expected_tau_powers_g1_length = (expected_tau_powers_length << 1) - 1;
+    
+    // Manually verify the accumulator structure by reading and checking each section
+    println!("Reading and verifying tau_powers_g1 ({} points)...", expected_tau_powers_g1_length);
+    verify_g1_points(&mut reader, expected_tau_powers_g1_length)?;
+    
+    println!("Reading and verifying tau_powers_g2 ({} points)...", expected_tau_powers_length);
+    verify_g2_points(&mut reader, expected_tau_powers_length)?;
+    
+    println!("Reading and verifying alpha_tau_powers_g1 ({} points)...", expected_tau_powers_length);
+    verify_g1_points(&mut reader, expected_tau_powers_length)?;
+    
+    println!("Reading and verifying beta_tau_powers_g1 ({} points)...", expected_tau_powers_length);
+    verify_g1_points(&mut reader, expected_tau_powers_length)?;
+    
+    println!("Reading and verifying beta_g2 (1 point)...");
+    verify_g2_points(&mut reader, 1)?;
+    
+    println!("✓ Successfully verified reduced challenge file");
+    println!("  - All curve points are valid");
+    println!("  - No points at infinity found");
+    println!("  - Accumulator structure is correct for 2^{}", target_power);
+    
+    Ok(())
+}
+
+fn verify_g1_points<R: Read>(reader: &mut R, count: usize) -> Result<(), Box<dyn std::error::Error>> {
+    use bellman::pairing::EncodedPoint;
+    use bellman::pairing::bls12_381::G1Uncompressed;
+    
+    for i in 0..count {
+        let mut encoded = G1Uncompressed::empty();
+        reader.read_exact(encoded.as_mut())?;
+        
+        match encoded.into_affine() {
+            Ok(point) => {
+                if point.is_zero() {
+                    return Err(format!("Point at infinity found at G1 index {}", i).into());
+                }
+            },
+            Err(e) => {
+                return Err(format!("Invalid G1 point at index {}: {:?}", i, e).into());
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+fn verify_g2_points<R: Read>(reader: &mut R, count: usize) -> Result<(), Box<dyn std::error::Error>> {
+    use bellman::pairing::EncodedPoint;
+    use bellman::pairing::bls12_381::G2Uncompressed;
+    
+    for i in 0..count {
+        let mut encoded = G2Uncompressed::empty();
+        reader.read_exact(encoded.as_mut())?;
+        
+        match encoded.into_affine() {
+            Ok(point) => {
+                if point.is_zero() {
+                    return Err(format!("Point at infinity found at G2 index {}", i).into());
+                }
+            },
+            Err(e) => {
+                return Err(format!("Invalid G2 point at index {}: {:?}", i, e).into());
+            }
+        }
     }
     
     Ok(())
