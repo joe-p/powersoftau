@@ -4,7 +4,7 @@ extern crate memmap;
 extern crate rand;
 extern crate blake2;
 extern crate byteorder;
-extern crate crypto;
+
 
 // use powersoftau::bls12_381::{Bls12CeremonyParameters};
 use powersoftau::small_bls12_381::{Bls12CeremonyParameters};
@@ -37,11 +37,9 @@ fn main() {
         use byteorder::{ReadBytesExt, BigEndian};
         use rand::{SeedableRng};
         use rand::chacha::ChaChaRng;
-        use crypto::sha2::Sha256;
-        use crypto::digest::Digest;
-
+        use sha2::{Sha256, Digest};
         // Place block hash here (block number #564321)
-        let mut cur_hash: [u8; 32] = hex!("0000000000000000000a558a61ddc8ee4e488d647a747fe4dcc362fe2026c620");
+        let mut cur_hash: [u8; 32] = *b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0a\x55\x8a\x61\xdd\xc8\xee\x4e\x48\x8d\x64\x7a\x74\x7f\xe4\xdc\xc3\x62\xfe\x20\x26\xc6\x20";
 
         // Performs 2^n hash iterations over it
         const N: usize = 31;
@@ -60,9 +58,8 @@ fn main() {
             }
 
             let mut h = Sha256::new();
-            h.input(&cur_hash);
-            h.result(&mut cur_hash);
-        }
+            h.update(&cur_hash);
+            cur_hash = h.finalize().into();        }
 
         print!("Final result of beacon: ");
         for b in cur_hash.iter() {
